@@ -1,0 +1,172 @@
+<form theme="dark">
+  <label>VMT - KEV Status</label>
+  <description>Known Exploitable Vulnerabilities found in the last 4 days</description>
+  <search id="basesearch">
+    <query>index="<<YOUR_INDEX>>" sourcetype="tenable:sc:vuln" NOT cve="" severity IN ("critical", "high", "medium", "low") hasBeenMitigated="false" dest=$dnsname$
+[ | inputlookup $dropdown_kev$ | rename cveID as query | fields query]
+| fields dest,cve,dnsName,ip,category
+| dedup dest,cve 
+| rename cve as kev
+| makemv delim="," kev
+| mvexpand kev
+| search [ | inputlookup $dropdown_kev$ $due_date$ | rename cveID as kev | fields kev]
+| dedup dest,kev
+  </query>
+    <earliest>$timepicker.earliest$</earliest>
+    <latest>$timepicker.latest$</latest>
+  </search>
+  <search>
+    <query>| makeresults|eval today=strftime(_time,"%Y-%m-%d")|fields - _time</query>
+    <done>
+      <set token="today_token">$result.today$</set>
+    </done>
+  </search>
+  <fieldset submitButton="false">
+    <input type="dropdown" token="dropdown_kev">
+      <label>KEV List</label>
+      <choice value="known_exploited_vulnerabilities.csv">CISA</choice>
+      <choice value="vmt-kev-other.csv">other</choice>
+      <default>known_exploited_vulnerabilities.csv</default>
+    </input>
+    <input type="time" token="timepicker" searchWhenChanged="true">
+      <label>Timeframe</label>
+      <default>
+        <earliest>-4d@d</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="due_date" searchWhenChanged="true">
+      <label>(Optional) Filter by Due Date</label>
+      <fieldForLabel>label</fieldForLabel>
+      <fieldForValue>value</fieldForValue>
+      <search>
+        <query>| makeresults
+| eval _raw="label, value
+All, 
+Current,| where dueDate&gt;=\"" + strftime(_time,"%Y-%m-%d") + "\"
+Past Due,| where dueDate&lt;\"" + strftime(_time,"%Y-%m-%d") + "\""
+| multikv forceheader=1
+| table label, value</query>
+        <earliest>-15m</earliest>
+        <latest>now</latest>
+      </search>
+      <default></default>
+    </input>
+    <input type="text" token="dnsname">
+      <label>(Optional) Filter by Machine Name</label>
+      <default>*</default>
+      <initialValue>*</initialValue>
+    </input>
+  </fieldset>
+  <row>
+    <panel depends="$hidden$">
+      <title>KEVs Found</title>
+      <single>
+        <search base="basesearch">
+          <query>| stats dc(kev)</query>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </single>
+    </panel>
+    <panel>
+      <title>$total$ KEVs found</title>
+      <chart>
+        <search base="basesearch">
+          <query>| top limit=9999 kev</query>
+          <done>
+            <set token="total">$job.resultCount$</set>
+          </done>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Total KEV Instances found</title>
+      <single>
+        <search base="basesearch">
+          <query>|stats count</query>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Machines with KEVs</title>
+      <single>
+        <search base="basesearch">
+          <query>| stats dc(dest)</query>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>KEV Instances Found  $due_date$</title>
+      <table>
+        <search base="basesearch">
+          <query>| lookup $dropdown_kev$ cveID AS kev OUTPUT dateAdded AS "date added" dueDate AS "due date"
+| fillnull value="" "date added" "due date"
+| top limit=9999 kev,"date added","due date",category</query>
+        </search>
+        <option name="count">50</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <drilldown>
+          <condition field="kev">
+            <link target="_blank">search?q=search%20index%3D"<<YOUR_INDEX>>"%20sourcetype%3D"tenable%3Asc%3Avuln"%20"$click.value2$"%20hasBeenMitigated%3D"false"%20%7C%20makemv%20delim%3D"%2C"%20cve%0A%7C%20eval%20cve%3Dmvfilter(match(cve%2C%22$click.value2$%22))%0A%7C%20search%20cve%3D%22$click.value2$%22%0A%7C%20dedup%20dnsName%2C%20ip%20%7C%20table%20dnsName%2C%20ip%2C%20cve&amp;earliest=$timepicker.earliest$&amp;latest=$timepicker.latest$</link>
+          </condition>
+          <condition field="*"></condition>
+        </drilldown>
+      </table>
+    </panel>
+    <panel>
+      <title>KEVs by Machine</title>
+      <table>
+        <search base="basesearch">
+          <query>| mvcombine kev
+| eval count=mvcount(kev)
+| rename dest as "machine"
+| table machine,ip,kev,count
+| sort - count</query>
+        </search>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <drilldown>
+          <condition field="machine">
+            <link target="_blank">search?q=index%3D%22<<YOUR_INDEX>>%22%20sourcetype%3D%22tenable:sc:vuln%22%20dest%3D%22$click.value2$%22%20hasBeenMitigated%3D%22false%22&amp;earliest=$timepicker.earliest$&amp;latest=$timepicker.latest$</link>
+          </condition>
+          <condition field="ip">
+            <link target="_blank">search?q=index%3D%22<<YOUR_INDEX>>%22%20sourcetype%3D%22tenable:sc:vuln%22%20ip%3D%22$click.value2$%22%20hasBeenMitigated%3D%22false%22&amp;earliest=$timepicker.earliest$&amp;latest=$timepicker.latest$</link>
+          </condition>
+          <condition field="*"></condition>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <search>
+          <query>| inputlookup $dropdown_kev$
+| stats count
+| eval "stats"=count + " KEVs in the lookup table $dropdown_kev$"
+| append [| inputlookup $dropdown_kev$
+          | fields dateAdded
+          | sort - dateAdded
+          | head limit=1
+          | fillnull value="No Date Entered" dateAdded
+          | eval "stats"="The latest KEV date added in the list is: " + dateAdded]
+| fields "stats"</query>
+          <earliest>$earliest$</earliest>
+          <latest>$latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+</form>

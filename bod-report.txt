@@ -1,0 +1,16 @@
+| inputlookup known_exploited_vulnerabilities.csv
+| rename cveID as "cve"
+| join type=outer cve
+    [| search index="<<YOUR_INDEX>>" sourcetype="tenable:sc:vuln" severity IN ("critical", "high", "medium", "low") hasBeenMitigated="false"
+        [ | inputlookup known_exploited_vulnerabilities.csv | rename cveID as query | fields query]
+    | fields dest,cve,dnsName,ip
+    | dedup dest,cve 
+    | makemv delim="," cve
+    | mvexpand cve
+    | search [ | inputlookup known_exploited_vulnerabilities.csv | rename cveID as cve | fields cve]
+    | dedup dest,cve
+    | stats count by cve]
+| eval "Finding Justification" = "CDM Dashboard is not reporting correctly"
+| rename cve as CVE, dateAdded as "Date Added", vulnerabilityName as "Vulnerability Name", count as "Appended Total Findings"
+| sort -"Date Added", +CVE
+| table CVE, "Date Added", "Vulnerability Name", "CDM Import Count", "CDM Import date", "Appended Total Findings", "Challenges and Constraints", "Finding Justification"
